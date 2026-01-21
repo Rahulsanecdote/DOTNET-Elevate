@@ -1,3 +1,5 @@
+import type { Timestamp, FieldValue } from 'firebase/firestore';
+
 // Based on the Canonical Data Model in the project brief.
 
 /**
@@ -5,8 +7,8 @@
  */
 export interface Stream {
   // streamId is the document ID
-  createdAt: { seconds: number; nanoseconds: number };
-  lastSeenAt: { seconds: number; nanoseconds: number };
+  createdAt: Timestamp | FieldValue;
+  lastSeenAt: Timestamp | FieldValue;
   stats?: {
     eventCount?: number;
     errorRate?: number;
@@ -32,7 +34,7 @@ export interface SchemaField {
 export interface SchemaVersion {
   // schemaVersionId is the document ID
   streamId: string;
-  createdAt: { seconds: number; nanoseconds: number };
+  createdAt: Timestamp | FieldValue;
   shapeHash: string;
   fields: SchemaField[];
   notes?: string;
@@ -45,13 +47,13 @@ export interface SchemaVersion {
 export interface Event {
   // eventId is the document ID
   streamId: string;
-  receivedAt: { seconds: number; nanoseconds: number };
+  receivedAt: Timestamp | FieldValue;
   contentType: string;
   sizeBytes: number;
   rawPayload: string; // Can be base64 for binary data.
   parseStatus: 'OK' | 'FAILED' | 'PARTIAL';
-  parsedJson?: any;
-  flattenedFields?: Record<string, string | number | boolean>;
+  parsedJson?: any | null;
+  flattenedFields?: Record<string, string | number | boolean> | null;
   schemaVersionId?: string;
   hash?: string;
   metadata?: {
