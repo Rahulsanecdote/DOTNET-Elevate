@@ -16,6 +16,7 @@ import {
 import { UserNav } from "@/components/user-nav";
 import Link from "next/link";
 import {
+  Activity,
   BookOpen,
   Briefcase,
   Code,
@@ -27,6 +28,7 @@ import { Button } from "./ui/button";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: <LayoutDashboard /> },
+  { href: "/streams", label: "Streams", icon: <Activity /> },
   { href: "/learn", label: "Learn", icon: <BookOpen /> },
   { href: "/jobs", label: "Jobs", icon: <Briefcase /> },
   { href: "/interview", label: "Interview", icon: <Mic /> },
