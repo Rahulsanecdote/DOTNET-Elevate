@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +8,14 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { UploadCloud, File as FileIcon, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useFirebase } from "@/firebase";
+import { extractTextFromDocx } from "@/lib/extract/docx";
+import { extractTextFromPdf } from "@/lib/extract/pdf";
+import { extractTextFromTxt } from "@/lib/extract/txt";
+import { sanitizeText } from "@/lib/sanitize/pii";
+import { computeInputHash } from "@/lib/hash/inputHash";
+import { createInterviewKitRequest } from "@/lib/api/interviewKitClient";
+
 
 const ALLOWED_FILE_TYPES = [
   "application/pdf",
@@ -22,15 +29,17 @@ type Status =
   | "validating"
   | "extracting"
   | "sanitizing"
-  | "generating"
+  | "hashing"
+  | "requesting"
   | "error";
 
 const statusMessages: Record<Status, string> = {
   idle: "",
-  validating: "Validating file...",
-  extracting: "Extracting text...",
+  validating: "Validating files...",
+  extracting: "Extracting text from documents...",
   sanitizing: "Sanitizing personal information...",
-  generating: "Generating your interview kit...",
+  hashing: "Creating secure hash...",
+  requesting: "Requesting kit generation...",
   error: "An error occurred.",
 };
 
@@ -39,6 +48,7 @@ type UploadBoxProps = {
 };
 
 export function UploadBox({ onKitCreated }: UploadBoxProps) {
+  const { user } = useFirebase();
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [jdFile, setJdFile] = useState<File | null>(null);
   const [targetRole, setTargetRole] = useState("");
@@ -48,7 +58,8 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
+  const jdInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileValidation = (file: File) => {
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
@@ -59,8 +70,8 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
     }
     return null;
   };
-
-  const handleFileSelect = (files: FileList | null) => {
+  
+  const handleFileSelect = (files: FileList | null, isForJd: boolean) => {
     if (!files || files.length === 0) return;
     const file = files[0];
     const validationError = handleFileValidation(file);
@@ -69,10 +80,10 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
       return;
     }
 
-    if (!useBoth || !resumeFile) {
-        setResumeFile(file);
-    } else {
+    if (isForJd) {
         setJdFile(file);
+    } else {
+        setResumeFile(file);
     }
     setError(null);
   };
@@ -88,11 +99,25 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault(); // This is necessary to allow dropping
   };
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const onDrop = (e: React.DragEvent<HTMLDivElement>, isForJd: boolean) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFileSelect(e.dataTransfer.files);
+    handleFileSelect(e.dataTransfer.files, isForJd);
   };
+  
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    switch (file.type) {
+      case 'application/pdf':
+        return extractTextFromPdf(file);
+      case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        return extractTextFromDocx(file);
+      case 'text/plain':
+        return extractTextFromTxt(file);
+      default:
+        throw new Error(`Unsupported file type: ${file.type}`);
+    }
+  };
+
 
   const formatBytes = (bytes: number, decimals = 2) => {
     if (bytes === 0) return "0 Bytes";
@@ -104,30 +129,52 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
   };
 
   const handleSubmit = async () => {
-    if (!resumeFile) {
-        setError("Please upload a resume to continue.");
+    if (!resumeFile && !jdFile) {
+        setError("Please upload at least a resume or a job description.");
         return;
     }
-    if (useBoth && !jdFile) {
-        setError("Please upload a job description to continue.");
+    if (!user) {
+        setError("Could not identify user. Please try refreshing the page.");
         return;
     }
-
+    
+    setError(null);
     setStatus("validating");
-    await new Promise(res => setTimeout(res, 500));
-    
-    setStatus("extracting");
-    await new Promise(res => setTimeout(res, 1000));
 
-    setStatus("sanitizing");
-    await new Promise(res => setTimeout(res, 1000));
-    
-    setStatus("generating");
-    await new Promise(res => setTimeout(res, 2000));
+    try {
+        let resumeText: string | undefined;
+        let jdText: string | undefined;
+        
+        setStatus("extracting");
+        if (resumeFile) {
+            resumeText = await extractTextFromFile(resumeFile);
+        }
+        if (jdFile) {
+            jdText = await extractTextFromFile(jdFile);
+        }
+        
+        setStatus("sanitizing");
+        const { sanitized: sanitizedResume } = sanitizeText(resumeText || '', { privacyMode: isPrivacyMode });
+        const { sanitized: sanitizedJd } = sanitizeText(jdText || '', { privacyMode: isPrivacyMode });
+        
+        setStatus("hashing");
+        const inputHash = await computeInputHash({ resume: sanitizedResume, jd: sanitizedJd, targetRole });
 
-    // In a real app, this would be the result of an API call
-    const newKitId = `kit_${Date.now()}`;
-    onKitCreated(newKitId);
+        setStatus("requesting");
+        const kitId = await createInterviewKitRequest(user, {
+            inputHash,
+            resumeText: sanitizedResume,
+            jdText: sanitizedJd,
+            targetRole,
+        });
+
+        onKitCreated(kitId);
+
+    } catch (e: any) {
+        console.error(e);
+        setError(e.message || "An unexpected error occurred during processing.");
+        setStatus("error");
+    }
   };
 
   const isGenerating = status !== "idle" && status !== "error";
@@ -135,12 +182,12 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
   function renderFilePill(file: File, onRemove: () => void) {
     return (
       <div className="flex items-center justify-between rounded-full bg-muted p-2 pl-4 text-sm">
-          <div className="flex items-center gap-2">
-              <FileIcon className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{file.name}</span>
-              <span className="text-muted-foreground">({formatBytes(file.size)})</span>
+          <div className="flex items-center gap-2 overflow-hidden">
+              <FileIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+              <span className="font-medium truncate" title={file.name}>{file.name}</span>
+              <span className="text-muted-foreground whitespace-nowrap">({formatBytes(file.size)})</span>
           </div>
-          <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full" onClick={onRemove} disabled={isGenerating}>
+          <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full flex-shrink-0" onClick={onRemove} disabled={isGenerating}>
               <X className="h-4 w-4" />
           </Button>
       </div>
@@ -148,6 +195,7 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
   }
 
   function renderDropzone(isForJd = false) {
+    const inputRef = isForJd ? jdInputRef : resumeInputRef;
     return (
       <div
           className={cn(
@@ -155,22 +203,22 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
               isDragging ? "border-primary bg-primary/10" : "hover:bg-muted/50",
               isGenerating && "cursor-not-allowed opacity-50"
           )}
-          onClick={() => !isGenerating && fileInputRef.current?.click()}
+          onClick={() => !isGenerating && inputRef.current?.click()}
           onDragEnter={onDragEnter}
           onDragLeave={onDragLeave}
           onDragOver={onDragOver}
-          onDrop={onDrop}
+          onDrop={(e) => onDrop(e, isForJd)}
       >
-          <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
+          <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground text-center px-4">
               <UploadCloud className="h-10 w-10" />
               <p className="font-semibold">{isForJd ? "Drop Job Description here" : "Drop Resume here"}</p>
               <p className="text-xs">PDF, DOCX, or TXT (max 10MB)</p>
           </div>
           <input
-              ref={fileInputRef}
+              ref={inputRef}
               type="file"
               className="hidden"
-              onChange={(e) => handleFileSelect(e.target.files)}
+              onChange={(e) => handleFileSelect(e.target.files, isForJd)}
               accept={ALLOWED_FILE_TYPES.join(",")}
               disabled={isGenerating}
           />
@@ -183,7 +231,7 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
       <CardContent className="p-6">
         <div className="space-y-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 flex-grow">
                 <Label htmlFor="targetRole">Target Role (Optional)</Label>
                 <Input
                     id="targetRole"
@@ -193,7 +241,7 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
                     disabled={isGenerating}
                 />
             </div>
-            <div className="flex items-center justify-between gap-4 md:justify-start">
+            <div className="flex items-center justify-between gap-4 md:justify-start pt-4 md:pt-0">
                 <div className="flex items-center space-x-2">
                     <Switch id="privacyMode" checked={isPrivacyMode} onCheckedChange={setIsPrivacyMode} disabled={isGenerating} />
                     <Label htmlFor="privacyMode">Privacy Mode</Label>
@@ -207,12 +255,12 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
 
           <div className={cn("grid gap-4", useBoth ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1")}>
             <div>
-                <Label className="mb-2 block">{useBoth ? "Resume" : "Resume or Job Description"}</Label>
-                {resumeFile ? renderFilePill(resumeFile, () => setResumeFile(null)) : renderDropzone()}
+                <Label className="mb-2 block">{useBoth ? "Resume*" : "Resume or Job Description*"}</Label>
+                {resumeFile ? renderFilePill(resumeFile, () => setResumeFile(null)) : renderDropzone(false)}
             </div>
             {useBoth && (
                 <div>
-                    <Label className="mb-2 block">Job Description</Label>
+                    <Label className="mb-2 block">Job Description*</Label>
                     {jdFile ? renderFilePill(jdFile, () => setJdFile(null)) : renderDropzone(true)}
                 </div>
             )}
@@ -220,7 +268,7 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
           
           {error && <p className="text-center text-sm text-destructive">{error}</p>}
           
-          <Button onClick={handleSubmit} disabled={isGenerating || !resumeFile} className="w-full">
+          <Button onClick={handleSubmit} disabled={isGenerating || (!resumeFile && !jdFile)} className="w-full">
             {isGenerating ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
