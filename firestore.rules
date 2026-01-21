@@ -1,0 +1,72 @@
+/**
+ * Core Philosophy: This ruleset implements a public, read-only data model for an observability application.
+ * The primary goal is to allow any client or user to read and query data streams, schemas, and events
+ * without authentication. All write operations (create, update, delete) are explicitly denied. This enforces
+ * a critical security posture where data can only be ingested and modified by a trusted backend service
+ * using the Firebase Admin SDK, which bypasses these security rules.
+ *
+ * Data Structure: The data is organized hierarchically. A top-level `/streams` collection holds individual
+ * stream documents. Each stream document then contains two subcollections: `/schemaVersions` for tracking
+ * schema changes and `/events` for storing the ingested data points. This separation keeps the data model
+ * clean and performant.
+ *
+ * Key Security Decisions:
+ * - Public Read Access: All `get` and `list` operations are permitted for all collections, allowing for
+ *   unauthenticated real-time display and exploration of the data.
+ * - No Client Writes: All `create`, `update`, and `delete` operations are disabled. This is a fundamental
+ *   decision to protect data integrity, ensuring that only the backend can persist new events or modify
+ *   stream metadata.
+ * - No User-Specific Data: The ruleset does not handle user authentication or ownership, as the
+ *   application's data is considered public observability information, not private user content.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * @description Controls access to individual stream documents. Allows public read access to stream
+     *              metadata but denies all client-side write operations.
+     * @path        /streams/{streamId}
+     * @allow       (get) Any user, signed-in or anonymous, can fetch a specific stream document.
+     * @deny        (create) A client SDK cannot create a new stream document.
+     * @principle   Public Read, Backend-Only Writes. Client-side modifications are disabled to ensure data integrity.
+     */
+    match /streams/{streamId} {
+      allow get: if true;
+      allow list: if true;
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+
+      /**
+       * @description Controls access to schema versions within a stream. Allows public read but denies writes.
+       * @path        /streams/{streamId}/schemaVersions/{schemaVersionId}
+       * @allow       (list) Any user can list all schema versions for a given stream.
+       * @deny        (update) A client SDK cannot modify an existing schema version document.
+       * @principle   Public Read, Backend-Only Writes. Subcollection inherits the security posture of its parent.
+       */
+      match /schemaVersions/{schemaVersionId} {
+        allow get: if true;
+        allow list: if true;
+        allow create: if false;
+        allow update: if false;
+        allow delete: if false;
+      }
+
+      /**
+       * @description Controls access to event documents within a stream. Allows public read but denies writes.
+       * @path        /streams/{streamId}/events/{eventId}
+       * @allow       (get) Any user can fetch a specific event's data.
+       * @deny        (delete) A client SDK cannot delete an event document.
+       * @principle   Public Read, Backend-Only Writes. Subcollection inherits the security posture of its parent.
+       */
+      match /events/{eventId} {
+        allow get: if true;
+        allow list: if true;
+        allow create: if false;
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+  }
+}

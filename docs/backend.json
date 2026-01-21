@@ -1,0 +1,216 @@
+{
+  "entities": {
+    "Event": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Event",
+      "type": "object",
+      "description": "Represents an event ingested by the system.",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "description": "Unique identifier for the event.",
+          "format": "uuid"
+        },
+        "streamId": {
+          "type": "string",
+          "description": "Identifier of the stream the event belongs to. (Relationship: Stream 1:N Event)"
+        },
+        "receivedAt": {
+          "type": "string",
+          "description": "UTC timestamp indicating when the event was received.",
+          "format": "date-time"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Content type of the raw payload."
+        },
+        "sizeBytes": {
+          "type": "number",
+          "description": "Size of the raw payload in bytes."
+        },
+        "rawPayload": {
+          "type": "string",
+          "description": "The raw payload of the event, stored as base64 encoded string or byte array."
+        },
+        "parseStatus": {
+          "type": "string",
+          "description": "Status of the parsing attempt (OK, FAILED, PARTIAL)."
+        },
+        "parsedJson": {
+          "type": "string",
+          "description": "JSON representation of the parsed payload, if parsing was successful.",
+          "format": "json"
+        },
+        "flattenedFields": {
+          "type": "string",
+          "description": "Key-value pairs of flattened fields for indexing and filtering, stored as JSON.",
+          "format": "json"
+        },
+        "schemaVersionId": {
+          "type": "string",
+          "description": "Reference to SchemaVersion. (Relationship: SchemaVersion 1:N Event). Nullable if no schema version is associated.",
+          "format": "uuid"
+        },
+        "hash": {
+          "type": "string",
+          "description": "Hash of the payload for deduplication purposes."
+        },
+        "metadata": {
+          "type": "string",
+          "description": "Metadata associated with the event (headers, remote IP, etc.), stored as JSON.",
+          "format": "json"
+        }
+      },
+      "required": [
+        "eventId",
+        "streamId",
+        "receivedAt",
+        "contentType",
+        "sizeBytes",
+        "rawPayload",
+        "parseStatus"
+      ]
+    },
+    "SchemaVersion": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SchemaVersion",
+      "type": "object",
+      "description": "Represents a specific version of the schema for a given stream.",
+      "properties": {
+        "schemaVersionId": {
+          "type": "string",
+          "description": "Unique identifier for the schema version.",
+          "format": "uuid"
+        },
+        "streamId": {
+          "type": "string",
+          "description": "Identifier of the stream this schema version belongs to. (Relationship: Stream 1:N SchemaVersion)"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "UTC timestamp indicating when the schema version was created.",
+          "format": "date-time"
+        },
+        "shapeHash": {
+          "type": "string",
+          "description": "Hash of the field paths and types for this schema version."
+        },
+        "fields": {
+          "type": "string",
+          "description": "List of fields and their properties (path, type, nullable, example, frequency), stored as JSON.",
+          "format": "json"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Notes about this schema version (e.g., type changes detected)."
+        }
+      },
+      "required": [
+        "schemaVersionId",
+        "streamId",
+        "createdAt",
+        "shapeHash",
+        "fields"
+      ]
+    },
+    "Stream": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Stream",
+      "type": "object",
+      "description": "Represents a stream of events.",
+      "properties": {
+        "streamId": {
+          "type": "string",
+          "description": "Unique identifier for the stream."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "UTC timestamp indicating when the stream was created.",
+          "format": "date-time"
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "description": "UTC timestamp indicating when the stream was last seen.",
+          "format": "date-time"
+        },
+        "stats": {
+          "type": "string",
+          "description": "Statistics about the stream (EPS, error rate, top fields, etc.), stored as JSON.",
+          "format": "json"
+        }
+      },
+      "required": [
+        "streamId",
+        "createdAt",
+        "lastSeenAt"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/streams/{streamId}",
+        "definition": {
+          "entityName": "Stream",
+          "schema": {
+            "$ref": "#/backend/entities/Stream"
+          },
+          "description": "Stores metadata about data streams. StreamId is the document ID. There is no need for authorization fields as no user authentication is required.",
+          "params": [
+            {
+              "name": "streamId",
+              "description": "Unique identifier for the data stream; used as the document ID."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/streams/{streamId}/schemaVersions/{schemaVersionId}",
+        "definition": {
+          "entityName": "SchemaVersion",
+          "schema": {
+            "$ref": "#/backend/entities/SchemaVersion"
+          },
+          "description": "Stores schema versions for each stream. SchemaVersionId is the document ID. StreamId is denormalized for efficient querying.  There is no need for authorization fields as no user authentication is required.",
+          "params": [
+            {
+              "name": "streamId",
+              "description": "Identifier of the data stream."
+            },
+            {
+              "name": "schemaVersionId",
+              "description": "Unique identifier for the schema version; used as the document ID."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/streams/{streamId}/events/{eventId}",
+        "definition": {
+          "entityName": "Event",
+          "schema": {
+            "$ref": "#/backend/entities/Event"
+          },
+          "description": "Stores event data for each stream. EventId is the document ID. StreamId is denormalized for efficient querying.  There is no need for authorization fields as no user authentication is required.",
+          "params": [
+            {
+              "name": "streamId",
+              "description": "Identifier of the data stream."
+            },
+            {
+              "name": "eventId",
+              "description": "Unique identifier for the event; used as the document ID."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore data structure is designed to support the \"unknown data\" ingestion requirements, real-time display, schema inference, and exploration tools. It leverages structural segregation to ensure that different types of data (streams, schema versions, events) are stored in separate collections with distinct security postures. This approach avoids mixing data with different access needs, simplifying security rules and improving maintainability.\n\nAuthorization Independence is achieved through path-based ownership (e.g., `/streams/{streamId}/events/{eventId}`) for user-owned data, which eliminates the need for `get()` calls in security rules.  Since this application does not have user-specific data or authentication requirements, all streams and associated data will be publicly accessible (no authentication necessary). This greatly simplifies the data structure.\n\nThe structure supports the required QAPs by:\n\n*   **Enabling secure `list` operations:**  Since there is no authentication all data is public, but rate limiting can be enforced via Firebase extensions.\n*   **Enforcing invariants:** Timestamps are automatically maintained in Firestore and can be used to enforce retention policies."
+  }
+}
