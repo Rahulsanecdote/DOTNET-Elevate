@@ -9,10 +9,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AlertCircle, CheckCircle, Copy, Loader2, ServerCrash, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle, Copy, FileDown, Loader2, ServerCrash, Sparkles } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { cn } from '@/lib/utils';
+import { exportKitToPdf } from '@/lib/export/pdf';
 
 interface InterviewKitViewerProps {
   kitId: string;
@@ -105,6 +106,8 @@ export function InterviewKitViewer({ kitId, onReset }: InterviewKitViewerProps) 
   const { firestore, user } = useFirebase();
   const [kit, setKit] = useState<InterviewKit | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     if (!firestore || !user?.uid || !kitId) return;
@@ -123,6 +126,22 @@ export function InterviewKitViewer({ kitId, onReset }: InterviewKitViewerProps) 
     return () => unsubscribe();
   }, [firestore, user, kitId]);
 
+  const handleExport = () => {
+    if (!kit) return;
+    setIsExporting(true);
+    try {
+      exportKitToPdf(kit);
+    } catch (e) {
+      console.error("Failed to export PDF", e);
+      toast({
+        variant: "destructive",
+        title: "Export Failed",
+        description: "There was an error generating the PDF.",
+      });
+    } finally {
+      setTimeout(() => setIsExporting(false), 500);
+    }
+  };
 
   if (error) {
     return (
@@ -179,7 +198,11 @@ export function InterviewKitViewer({ kitId, onReset }: InterviewKitViewerProps) 
             {kit.questions.map((q, i) => <QuestionCard key={i} question={q} />)}
         </div>
 
-        <div className="text-center pt-4">
+        <div className="text-center pt-4 flex justify-center gap-4">
+            <Button onClick={handleExport} disabled={isExporting}>
+                {isExporting ? <Loader2 className="animate-spin mr-2" /> : <FileDown className="mr-2" />}
+                {isExporting ? 'Exporting...' : 'Export as PDF'}
+             </Button>
              <Button onClick={onReset} variant="outline">Create a New Kit</Button>
         </div>
     </div>
