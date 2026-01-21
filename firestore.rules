@@ -1,63 +1,170 @@
 /**
- * Core Philosophy: This ruleset implements a public, read-only data model for an observability application.
- * The primary goal is to allow any client or user to read and query data streams, schemas, and events
- * without authentication. All write operations (create, update, delete) are explicitly denied. This enforces
- * a critical security posture where data can only be ingested and modified by a trusted backend service
- * using the Firebase Admin SDK, which bypasses these security rules.
+ * @fileoverview Firestore Security Rules for .NET Elevate
  *
- * Data Structure: The data is organized hierarchically. A top-level `/streams` collection holds individual
- * stream documents. Each stream document then contains two subcollections: `/schemaVersions` for tracking
- * schema changes and `/events` for storing the ingested data points. This separation keeps the data model
- * clean and performant.
+ * Core Philosophy:
+ * This ruleset manages access for two distinct parts of the application:
+ * 1.  A public, read-only data model for an observability/data ingestion feature.
+ * 2.  A private, user-specific data model for personal "Interview Kits".
  *
- * Key Security Decisions:
- * - Public Read Access: All `get` and `list` operations are permitted for all collections, allowing for
- *   unauthenticated real-time display and exploration of the data.
- * - No Client Writes: All `create`, `update`, and `delete` operations are disabled. This is a fundamental
- *   decision to protect data integrity, ensuring that only the backend can persist new events or modify
- *   stream metadata.
- * - No User-Specific Data: The ruleset does not handle user authentication or ownership, as the
- *   application's data is considered public observability information, not private user content.
+ * Key Principles:
+ * - **Public Data (Streams)**: All data under `/streams` is public and read-only for clients.
+ *   This allows for unauthenticated real-time display of ingestion metrics. All writes to this
+ *   path MUST come from a trusted backend service using the Admin SDK.
+ * - **User-Owned Data (Interview Kits)**: Each user, identified by their UID (including
+ *   anonymous ones), is the sole owner of their data subtree under `/users/{uid}`. A user
+ *   can only read from or write to their own documents.
+ * - **No Global User Access**: Listing the top-level `/users` collection is disallowed to
+ *   prevent leaking user IDs.
+ * - **Data Integrity for Kits**: We enforce a valid shape on document creation and protect
+ *   immutable fields (like `createdAt` and `inputHash`) on updates.
  */
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    /**
-     * @description Controls access to individual stream documents. Allows public read access to stream
-     *              metadata but denies all client-side write operations.
-     * @path        /streams/{streamId}
-     */
+    //================================================================
+    //  Public Observability Data (Read-Only for Clients)
+    //================================================================
     match /streams/{streamId} {
-      allow get: if true;
-      allow list: if true;
-      allow create: if false;
-      allow update: if false;
-      allow delete: if false;
+      allow get, list: if true;
+      allow create, update, delete: if false;
 
-      /**
-       * @description Controls access to schema versions within a stream. Allows public read but denies writes.
-       * @path        /streams/{streamId}/schemaVersions/{schemaVersionId}
-       */
       match /schemaVersions/{schemaVersionId} {
-        allow get: if true;
-        allow list: if true;
-        allow create: if false;
-        allow update: if false;
-        allow delete: if false;
+        allow get, list: if true;
+        allow create, update, delete: if false;
       }
 
-      /**
-       * @description Controls access to event documents within a stream. Allows public read but denies writes.
-       * @path        /streams/{streamId}/events/{eventId}
-       */
       match /events/{eventId} {
-        allow get: if true;
-        allow list: if true;
-        allow create: if false;
-        allow update: if false;
-        allow delete: if false;
+        allow get, list: if true;
+        allow create, update, delete: if false;
+      }
+    }
+
+    //================================================================
+    //  Private User-Specific Data
+    //================================================================
+    match /users/{uid} {
+      // Disallow anyone from reading/listing the user document itself or other subcollections.
+      // Access is granted only to specific subcollections defined below.
+      allow read, write: if false;
+
+      // --- Interview Kits Subcollection ---
+      // Users can manage their own interview preparation kits.
+      match /interviewKits/{kitId} {
+
+        // READ and DELETE access is granted if the requester is the owner.
+        allow get, list, delete: if request.auth.uid == uid;
+
+        // CREATE access is granted if the requester is the owner AND the
+        // initial document has a valid shape.
+        allow create: if request.auth.uid == uid && isValidKitCreation();
+
+        // UPDATE access is granted if the requester is the owner AND immutable
+        // fields are not being changed.
+        allow update: if request.auth.uid == uid && isKitUpdateAllowed();
+      }
+
+      // Explicitly deny access to any other subcollections like 'metadata' from clients.
+      match /{allOtherSubcollections=**} {
+        allow read, write: if false;
       }
     }
   }
+
+  // --- Helper Functions for /users/{uid}/interviewKits/{kitId} ---
+
+  /**
+   * Validates that an incoming `interviewKit` document has the required
+   * fields and values for creation.
+   */
+  function isValidKitCreation() {
+    let data = request.resource.data;
+    let requiredFields = ['inputHash', 'sourceType', 'status', 'createdAt'];
+    
+    return data.keys().hasAll(requiredFields)
+           && data.inputHash is string
+           && data.sourceType is string
+           && (data.sourceType == 'resume' || data.sourceType == 'jobDescription' || data.sourceType == 'both')
+           && data.status == 'processing'
+           && data.createdAt == request.time;
+  }
+
+  /**
+   * Validates an update operation on an `interviewKit`. Ensures immutable fields
+   * are not modified.
+   */
+  function isKitUpdateAllowed() {
+      let newData = request.resource.data;
+      let oldData = resource.data;
+
+      // The `createdAt` and `inputHash` fields must never change after creation.
+      return newData.createdAt == oldData.createdAt
+             && newData.inputHash == oldData.inputHash
+             && newData.updatedAt == request.time; // Ensure updatedAt is a server timestamp.
+  }
 }
+
+/*
+=================================
+EMULATOR TEST SCENARIOS
+=================================
+
+// --- SETUP ---
+const myAuth = { uid: "my_uid" };
+const otherAuth = { uid: "other_uid" };
+const myKitPath = "/databases/(default)/documents/users/my_uid/interviewKits/my_kit";
+const otherKitPath = "/databases/(default)/documents/users/other_uid/interviewKits/other_kit";
+const myUserListPath = "/databases/(default)/documents/users";
+const myKitsCollectionPath = "/databases/(default)/documents/users/my_uid/interviewKits";
+
+const validCreateData = {
+  inputHash: "some_hash",
+  sourceType: "resume",
+  status: "processing",
+  createdAt: firestore.rules.testing.serverTimestamp(),
+  // other fields can be null or absent initially
+  roleTitle: null,
+  seniorityGuess: null,
+  skillsDetected: [],
+  questions: [],
+};
+
+// --- TESTS ---
+
+// 1. User should be able to get their own kit.
+await assertSucceeds(get({ auth: myAuth, path: myKitPath }));
+
+// 2. User should be able to list their own kits.
+await assertSucceeds(list({ auth: myAuth, path: myKitsCollectionPath }));
+
+// 3. User should NOT be able to get another user's kit.
+await assertFails(get({ auth: myAuth, path: otherKitPath }));
+
+// 4. User should NOT be able to list another user's kits.
+await assertFails(list({ auth: myAuth, path: "/databases/(default)/documents/users/other_uid/interviewKits" }));
+
+// 5. User should NOT be able to list all users.
+await assertFails(list({ auth: myAuth, path: myUserListPath }));
+
+// 6. User should be able to create a kit with valid initial data.
+await assertSucceeds(create({ auth: myAuth, path: myKitPath, resource: { data: validCreateData } }));
+
+// 7. User should NOT be able to create a kit with invalid status.
+await assertFails(create({ auth: myAuth, path: myKitPath, resource: { data: { ...validCreateData, status: 'ready' } } }));
+
+// 8. User should NOT be able to create a kit for another user.
+await assertFails(create({ auth: myAuth, path: otherKitPath, resource: { data: validCreateData } }));
+
+// 9. User should be able to update their own kit with valid changes.
+await assertSucceeds(update({ auth: myAuth, path: myKitPath, resource: { data: { ...validCreateData, status: 'ready', updatedAt: firestore.rules.testing.serverTimestamp() } } }));
+
+// 10. User should NOT be able to update an immutable field like createdAt.
+await assertFails(update({ auth: myAuth, path: myKitPath, resource: { data: { ...validCreateData, createdAt: firestore.rules.testing.serverTimestamp() } } }));
+
+// 11. Unauthenticated users should not be able to do anything in the /users tree.
+await assertFails(get({ path: myKitPath }));
+await assertFails(list({ path: myKitsCollectionPath }));
+
+// 12. Anyone should be able to read from the public /streams collection.
+await assertSucceeds(get({ path: "/databases/(default)/documents/streams/some_stream" }));
+*/
