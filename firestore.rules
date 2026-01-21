@@ -27,9 +27,6 @@ service cloud.firestore {
      * @description Controls access to individual stream documents. Allows public read access to stream
      *              metadata but denies all client-side write operations.
      * @path        /streams/{streamId}
-     * @allow       (get) Any user, signed-in or anonymous, can fetch a specific stream document.
-     * @deny        (create) A client SDK cannot create a new stream document.
-     * @principle   Public Read, Backend-Only Writes. Client-side modifications are disabled to ensure data integrity.
      */
     match /streams/{streamId} {
       allow get: if true;
@@ -41,9 +38,6 @@ service cloud.firestore {
       /**
        * @description Controls access to schema versions within a stream. Allows public read but denies writes.
        * @path        /streams/{streamId}/schemaVersions/{schemaVersionId}
-       * @allow       (list) Any user can list all schema versions for a given stream.
-       * @deny        (update) A client SDK cannot modify an existing schema version document.
-       * @principle   Public Read, Backend-Only Writes. Subcollection inherits the security posture of its parent.
        */
       match /schemaVersions/{schemaVersionId} {
         allow get: if true;
@@ -56,9 +50,6 @@ service cloud.firestore {
       /**
        * @description Controls access to event documents within a stream. Allows public read but denies writes.
        * @path        /streams/{streamId}/events/{eventId}
-       * @allow       (get) Any user can fetch a specific event's data.
-       * @deny        (delete) A client SDK cannot delete an event document.
-       * @principle   Public Read, Backend-Only Writes. Subcollection inherits the security posture of its parent.
        */
       match /events/{eventId} {
         allow get: if true;
