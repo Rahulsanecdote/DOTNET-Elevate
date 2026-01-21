@@ -22,6 +22,8 @@ export const InterviewKitSchema = z.object({
   skillsDetected: z.array(z.string()),
   resumeText: z.string().optional(),
   jdText: z.string().optional(),
+  resumeFileUrl: z.string().url().optional(),
+  jdFileUrl: z.string().url().optional(),
   questions: z.array(QuestionSchema),
   status: z.enum(['processing', 'ready', 'error']),
   errorMessage: z.string().optional(),

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
-import { UploadCloud, File as FileIcon, Loader2, X } from "lucide-react";
+import { UploadCloud, File as FileIcon, Loader2, X, FileUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFirebase } from "@/firebase";
 import { extractTextFromDocx } from "@/lib/extract/docx";
@@ -15,6 +15,7 @@ import { extractTextFromTxt } from "@/lib/extract/txt";
 import { sanitizeText } from "@/lib/sanitize/pii";
 import { computeInputHash } from "@/lib/hash/inputHash";
 import { createInterviewKitRequest } from "@/lib/api/interviewKitClient";
+import { uploadFileForUser } from "@/lib/storage/upload";
 
 
 const ALLOWED_FILE_TYPES = [
@@ -27,6 +28,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 type Status =
   | "idle"
   | "validating"
+  | "uploading"
   | "extracting"
   | "sanitizing"
   | "hashing"
@@ -36,6 +38,7 @@ type Status =
 const statusMessages: Record<Status, string> = {
   idle: "",
   validating: "Validating files...",
+  uploading: "Uploading files to secure storage...",
   extracting: "Extracting text from documents...",
   sanitizing: "Sanitizing personal information...",
   hashing: "Creating secure hash...",
@@ -48,11 +51,12 @@ type UploadBoxProps = {
 };
 
 export function UploadBox({ onKitCreated }: UploadBoxProps) {
-  const { user } = useFirebase();
+  const { user, storage } = useFirebase();
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [jdFile, setJdFile] = useState<File | null>(null);
   const [targetRole, setTargetRole] = useState("");
   const [isPrivacyMode, setIsPrivacyMode] = useState(true);
+  const [isStorageEnabled, setIsStorageEnabled] = useState(false);
   const [useBoth, setUseBoth] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -133,8 +137,8 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
         setError("Please upload at least a resume or a job description.");
         return;
     }
-    if (!user) {
-        setError("Could not identify user. Please try refreshing the page.");
+    if (!user || !storage) {
+        setError("Could not identify user or connect to storage. Please try refreshing the page.");
         return;
     }
     
@@ -142,8 +146,23 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
     setStatus("validating");
 
     try {
+        const kitId = crypto.randomUUID();
         let resumeText: string | undefined;
         let jdText: string | undefined;
+        let resumeFileUrl: string | undefined;
+        let jdFileUrl: string | undefined;
+
+        if (isStorageEnabled) {
+          setStatus("uploading");
+          if (resumeFile) {
+            const result = await uploadFileForUser(storage, user.uid, kitId, resumeFile, 'resume');
+            resumeFileUrl = result.downloadUrl;
+          }
+          if (jdFile) {
+             const result = await uploadFileForUser(storage, user.uid, kitId, jdFile, 'jd');
+            jdFileUrl = result.downloadUrl;
+          }
+        }
         
         setStatus("extracting");
         if (resumeFile) {
@@ -161,14 +180,17 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
         const inputHash = await computeInputHash({ resume: sanitizedResume, jd: sanitizedJd, targetRole });
 
         setStatus("requesting");
-        const kitId = await createInterviewKitRequest(user, {
+        const newKitId = await createInterviewKitRequest(user, {
+            kitId,
             inputHash,
             resumeText: sanitizedResume,
             jdText: sanitizedJd,
             targetRole,
+            resumeFileUrl,
+            jdFileUrl,
         });
 
-        onKitCreated(kitId);
+        onKitCreated(newKitId);
 
     } catch (e: any) {
         console.error(e);
@@ -230,7 +252,7 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
     <Card>
       <CardContent className="p-6">
         <div className="space-y-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="grid gap-4 md:grid-cols-2 md:items-end">
             <div className="space-y-1.5 flex-grow">
                 <Label htmlFor="targetRole">Target Role (Optional)</Label>
                 <Input
@@ -241,7 +263,13 @@ export function UploadBox({ onKitCreated }: UploadBoxProps) {
                     disabled={isGenerating}
                 />
             </div>
-            <div className="flex items-center justify-between gap-4 md:justify-start pt-4 md:pt-0">
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center space-x-2">
+                    <Switch id="storageMode" checked={isStorageEnabled} onCheckedChange={setIsStorageEnabled} disabled={isGenerating} />
+                    <Label htmlFor="storageMode" className="flex items-center gap-1.5">
+                      <FileUp className="h-4 w-4"/> Save Files
+                    </Label>
+                </div>
                 <div className="flex items-center space-x-2">
                     <Switch id="privacyMode" checked={isPrivacyMode} onCheckedChange={setIsPrivacyMode} disabled={isGenerating} />
                     <Label htmlFor="privacyMode">Privacy Mode</Label>

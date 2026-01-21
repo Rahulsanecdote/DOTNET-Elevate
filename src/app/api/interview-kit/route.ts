@@ -8,10 +8,13 @@ import { generateInterviewKit } from '@/ai/flows/generate-interview-kit';
 
 // Zod schema for validating the incoming request body.
 const RequestBodySchema = z.object({
+  kitId: z.string().uuid(),
   inputHash: z.string(),
   resumeText: z.string().optional(),
   jdText: z.string().optional(),
   targetRole: z.string().optional(),
+  resumeFileUrl: z.string().url().optional(),
+  jdFileUrl: z.string().url().optional(),
 }).refine(data => data.resumeText || data.jdText, {
   message: "Either resumeText or jdText must be provided.",
   path: ["resumeText"],
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
     if (!parsedBody.success) {
       return NextResponse.json({ error: 'Invalid request body', details: parsedBody.error.format() }, { status: 400 });
     }
-    const { inputHash, resumeText, jdText, targetRole } = parsedBody.data;
+    const { kitId, inputHash, resumeText, jdText, targetRole, resumeFileUrl, jdFileUrl } = parsedBody.data;
 
     // 3. Apply rate limiting
     await checkAndIncrementRateLimit(uid);
@@ -48,12 +51,14 @@ export async function POST(req: NextRequest) {
 
     // 5. Create a new kit document with "processing" status
     const sourceType = resumeText && jdText ? 'both' : (resumeText ? 'resume' : 'jobDescription');
-    const kitId = await createInterviewKitDocAdmin(uid, {
+    await createInterviewKitDocAdmin(uid, kitId, {
       inputHash,
       sourceType,
       roleTitle: targetRole || null,
       resumeText,
       jdText,
+      resumeFileUrl,
+      jdFileUrl,
     });
 
     // Respond immediately to the client with the new Kit ID.

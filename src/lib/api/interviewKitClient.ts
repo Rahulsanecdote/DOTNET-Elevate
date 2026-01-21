@@ -3,10 +3,13 @@
 import type { User } from 'firebase/auth';
 
 interface CreateKitPayload {
+  kitId: string;
   inputHash: string;
   resumeText?: string;
   jdText?: string;
   targetRole?: string;
+  resumeFileUrl?: string;
+  jdFileUrl?: string;
 }
 
 /**

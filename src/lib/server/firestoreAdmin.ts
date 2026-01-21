@@ -31,13 +31,14 @@ export async function findKitByHashAdmin(uid: string, inputHash: string): Promis
 /**
  * Creates a new interview kit document with "processing" status using the Admin SDK.
  * @param uid The user's ID.
+ * @param kitId The client-generated ID for the new document.
  * @param initialData The initial data for the kit.
- * @returns The ID of the newly created document.
  */
 export async function createInterviewKitDocAdmin(
   uid: string,
-  initialData: Pick<InterviewKit, 'inputHash' | 'sourceType' | 'roleTitle' | 'resumeText' | 'jdText'>
-): Promise<string> {
+  kitId: string,
+  initialData: Pick<InterviewKit, 'inputHash' | 'sourceType' | 'roleTitle' | 'resumeText' | 'jdText' | 'resumeFileUrl' | 'jdFileUrl'>
+): Promise<void> {
   const kitsCollection = getKitsCollection(uid);
   const docData = {
     ...initialData,
@@ -49,8 +50,8 @@ export async function createInterviewKitDocAdmin(
     updatedAt: FieldValue.serverTimestamp(),
   };
 
-  const docRef = await kitsCollection.add(docData);
-  return docRef.id;
+  const docRef = kitsCollection.doc(kitId);
+  await docRef.set(docData);
 }
 
 /**
